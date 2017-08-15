@@ -8,34 +8,6 @@ namespace SteamAPI
 {
     public class CSGOInventory : Inventory
     {
-        /// <summary>
-        /// Fetches the inventory for the given Steam ID using the Steam API.
-        /// </summary>
-        /// <returns>The give users inventory.</returns>
-        /// <param name='steamId'>Steam identifier.</param>
-        /// <param name='apiKey'>The needed Steam API key.</param>
-        /// <param name="steamWeb">The SteamWeb instance for this Bot</param>
-        public static CSGOInventory FetchInventory(ulong steamId, string apiKey, SteamWeb steamWeb)
-        {
-            var url = "http://api.steampowered.com/IEconItems_730/GetPlayerItems/v0001/?key=" + apiKey + "&steamid=" + steamId;
-            for (int i = 0; i < 100; i++)
-            {
-                try
-                {
-                    string response = steamWeb.Fetch(url, "GET", null, false);
-                    InventoryResponse result = JsonConvert.DeserializeObject<InventoryResponse>(response);
-                    if (result.result != null)
-                    {
-                        return new CSGOInventory(result.result) as CSGOInventory;
-                    }
-                }
-                catch (System.Net.WebException we)
-                {
-                    
-                }                
-            }
-            throw new InventoryException("Failed to load CSGO inventory.");
-        }
 
         /// <summary>
         /// Gets the inventory for the given Steam ID using the Steam Community website.
