@@ -55,12 +55,8 @@
   <ItemGroup>
     <Compile Include="AssemblyInfo.cs" />
     <Compile Include="GenericInventory.cs" />
-    <Compile Include="Inventory\CSGOInventory.cs" />
-    <Compile Include="Inventory\Dota2Inventory.cs" />
     <Compile Include="Inventory\Inventory.cs" />
-    <Compile Include="Inventory\NewGenericInventory.cs" />
     <Compile Include="SteamWeb.cs" />
-    <Compile Include="Inventory\TF2Inventory.cs" />
     <Compile Include="TradeOffers\Enums\TradeOfferConfirmationMethod.cs" />
     <Compile Include="TradeOffers\Enums\TradeOfferState.cs" />
     <Compile Include="TradeOffers\Objects\GetTradeOffer.cs" />
