@@ -24,7 +24,7 @@ namespace SteamAPI.Inventory
         {
             try
             {
-                var url = $"http://steamcommunity.com/inventory/{steamId}/{appId}/2?trading=1";
+                var url = string.Format("http://steamcommunity.com/inventory/{0}/{1}/2?trading=1",steamId,appId);
                 var rawResponse = steamWeb.Fetch(url, "GET", null, false);
                 var response = JsonConvert.DeserializeObject<InventoryResponse>(rawResponse);
 
