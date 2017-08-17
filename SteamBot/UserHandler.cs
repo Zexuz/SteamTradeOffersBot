@@ -72,9 +72,9 @@ namespace SteamBot
             get { return Bot.Admins.Contains(OtherSID); }
         }
 
-        public GenericInventory FetchInventories(SteamID steamId, List<int> appIdsToFetch = null)
+        public GenericInventory FetchInventories(SteamID steamId, Dictionary<int, int> appIdsAndContextId,bool onlyTradeableItems)
         {
-            return GenericInventory.FetchInventories(steamId, Bot.SteamWeb, appIdsToFetch);
+            return GenericInventory.FetchInventories(steamId, Bot.SteamWeb, appIdsAndContextId,onlyTradeableItems);
         }
 
         public abstract void OnTradeOfferChecked(TradeOffer tradeOffer);

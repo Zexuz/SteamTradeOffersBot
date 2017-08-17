@@ -26,7 +26,7 @@ namespace SteamAPI
         private bool _loaded = false;
 
         /// <summary>
-        /// Gets the content of all inventories listed in http://steamcommunity.com/profiles/STEAM_ID/inventory/
+        /// Gets the content of all inventories listed in "http://steamcommunity.com/inventory/STEAM_ID_/APP_ID/CONTEXT_ID
         /// </summary>
         public BotInventories Inventories
         {
@@ -37,60 +37,56 @@ namespace SteamAPI
             }
         }
 
-        public GenericInventory(SteamID steamId, SteamWeb steamWeb, List<int> appIdsToFetch = null)
+        public GenericInventory(SteamID steamId, SteamWeb steamWeb, Dictionary<int, int> appIdsAndContextId, bool onlyTradeableItems)
         {
+            if (appIdsAndContextId == null)
+            {
+                throw new ArgumentNullException("appIdsAndContextId");
+            }
+
+            if (appIdsAndContextId.Count == 0)
+            {
+                throw new ArgumentException("must have some value added","appIdsAndContextId");
+            }
+            _steamWeb = steamWeb;
+
             _constructTask = Task.Factory.StartNew(() =>
             {
-                _steamWeb = steamWeb;
-                var baseInventoryUrl = "http://steamcommunity.com/profiles/" + steamId.ConvertToUInt64() + "/inventory/";
-                var response = RetryWebRequest(baseInventoryUrl);
-                var reg = new Regex("var g_rgAppContextData = (.*?);");
-                var m = reg.Match(response);
-                if (m.Success)
+                try
                 {
-                    try
+                    foreach (var kvp in appIdsAndContextId)
                     {
-                        var json = m.Groups[1].Value;
-                        var schemaResult = JsonConvert.DeserializeObject<Dictionary<int, InventoryApps>>(json);
-                        foreach (var app in schemaResult)
+                        var contextId = (ulong) kvp.Value;
+                        var appId = kvp.Key;
+                        _inventoryTasks[appId] = new InventoryTasks.ContextTask();
+                        _inventoryTasks[appId][contextId] = Task.Factory.StartNew(() =>
                         {
-                            var appId = app.Key;
-                            if (appIdsToFetch != null && !appIdsToFetch.Contains(appId)) continue;
-                            _inventoryTasks[appId] = new InventoryTasks.ContextTask();
-                            foreach (var contextId in app.Value.RgContexts.Keys)
-                            {
-                                _inventoryTasks[appId][contextId] = Task.Factory.StartNew(() =>
-                                {
-                                    var inventoryUrl = string.Format("http://steamcommunity.com/profiles/{0}/inventory/json/{1}/{2}/", steamId.ConvertToUInt64(), appId, contextId);
-                                    var inventory = FetchInventory(inventoryUrl, steamId, appId, contextId);
-                                    if (!_inventories.HasAppId(appId))
-                                        _inventories[appId] = new BotInventories.ContextInventory();
-                                    if (inventory != null && !_inventories[appId].HasContextId(contextId))
-                                        _inventories[appId].Add(contextId, inventory);
-                                });
-                            }
-                        }
-                        Success = true;
+                            var inventoryUrl = string.Format("http://steamcommunity.com/inventory/{0}/{1}/{2}", steamId.ConvertToUInt64(), appId, contextId);
+                            if (onlyTradeableItems)
+                                inventoryUrl += "?trading=1";
+                            var inventory = FetchInventory(inventoryUrl, steamId, appId, contextId);
+                            if (!_inventories.HasAppId(appId))
+                                _inventories[appId] = new BotInventories.ContextInventory();
+                            if (inventory != null && !_inventories[appId].HasContextId(contextId))
+                                _inventories[appId].Add(contextId, inventory);
+                        });
                     }
-                    catch (Exception ex)
-                    {
-                        Success = false;
-                        Console.WriteLine(ex);
-                    }
+
+                    Success = true;
                 }
-                else
+                catch (Exception ex)
                 {
                     Success = false;
-                    IsPrivate = true;
+                    Console.WriteLine(ex);
                 }
             });
             new Thread(WaitAllTasks).Start();
         }
 
-        public static GenericInventory FetchInventories(SteamID steamId, SteamWeb steamWeb, List<int> appIdsToFetch = null)
+        public static GenericInventory FetchInventories(SteamID steamId, SteamWeb steamWeb, Dictionary<int, int> appIdsAndContextId, bool onlyTradeableItems)
         {
-            return new GenericInventory(steamId, steamWeb, appIdsToFetch);
-        }  
+            return new GenericInventory(steamId, steamWeb, appIdsAndContextId, onlyTradeableItems);
+        }
 
         public enum AppId
         {
@@ -100,7 +96,8 @@ namespace SteamAPI
             CSGO = 730,
             SpiralKnights = 99900,
             H1Z1 = 295110,
-            Steam = 753          
+            Steam = 753,
+            PUBG = 578080
         }
 
         public enum ContextId
@@ -110,10 +107,11 @@ namespace SteamAPI
             Portal2 = 2,
             CSGO = 2,
             H1Z1 = 1,
+            PUBG = 2,
             SteamGifts = 1,
             SteamCoupons = 3,
             SteamCommunity = 6,
-            SteamItemRewards = 7           
+            SteamItemRewards = 7
         }
 
         /// <summary>
@@ -132,36 +130,33 @@ namespace SteamAPI
             catch
             {
                 throw new GenericInventoryException();
-            }            
+            }
         }
 
-        public void AddForeignInventory(SteamID steamId, int appId, ulong contextId)
+        public void AddForeignInventory(SteamID steamId, int appId, ulong contextId,bool onlyTradeableItems)
         {
-            var inventory = FetchForeignInventory(steamId, appId, contextId);
+            var inventory = FetchForeignInventory(steamId, appId, contextId,onlyTradeableItems);
             if (!_inventories.HasAppId(appId))
                 _inventories[appId] = new BotInventories.ContextInventory();
             if (inventory != null && !_inventories[appId].HasContextId(contextId))
                 _inventories[appId].Add(contextId, inventory);
         }
 
-        private Inventory FetchForeignInventory(SteamID steamId, int appId, ulong contextId)
+        private Inventory FetchForeignInventory(SteamID steamId, int appId, ulong contextId, bool onlyTradeableItems)
         {
-            var inventoryUrl = string.Format("http://steamcommunity.com/trade/{0}/foreigninventory/?sessionid={1}&steamid={2}&appid={3}&contextid={4}", steamId.ConvertToUInt64(), _steamWeb.SessionId, steamId.ConvertToUInt64(), appId, contextId);
+            var inventoryUrl = string.Format("http://steamcommunity.com/inventory/{0}/{1}/{2}", steamId.ConvertToUInt64(), appId, contextId);
+            if (onlyTradeableItems)
+                inventoryUrl += "?trading=1";
             return FetchInventory(inventoryUrl, steamId, appId, contextId);
         }
 
-        private Inventory FetchInventory(string inventoryUrl, SteamID steamId, int appId, ulong contextId, int start = 0)
+        private Inventory FetchInventory(string inventoryUrl, SteamID steamId, int appId, ulong contextId)
         {
-            inventoryUrl = inventoryUrl + "&start=" + start;
             var response = RetryWebRequest(inventoryUrl);
             try
             {
                 var inventory = JsonConvert.DeserializeObject<Inventory>(response);
-                if (inventory.More) {
-                    var addInv = FetchInventory(inventoryUrl, steamId, appId, contextId, inventory.MoreStart);
-                    inventory.Items = inventory.Items.Concat(addInv.Items).ToList();
-                    inventory.Descriptions = inventory.Descriptions.Concat(addInv.Descriptions).ToList();
-                }
+
                 inventory.AppId = appId;
                 inventory.ContextId = contextId;
                 inventory.SteamId = steamId;
@@ -173,7 +168,7 @@ namespace SteamAPI
                 Console.WriteLine(ex);
                 return null;
             }
-        }        
+        }
 
         private void WaitAllTasks()
         {
@@ -194,7 +189,7 @@ namespace SteamAPI
             if (_loaded) return;
             _loaded = true;
             if (InventoriesLoaded != null)
-                InventoriesLoaded(this, e);            
+                InventoriesLoaded(this, e);
         }
 
         /// <summary>
@@ -224,238 +219,74 @@ namespace SteamAPI
         }
 
         public bool Success = true;
-        public bool IsPrivate;        
-
-        public class InventoryApps
-        {
-            [JsonProperty("appid")]
-            public int AppId { get; set; }
-
-            [JsonProperty("name")]
-            public string Name { get; set; }
-
-            [JsonProperty("icon")]
-            public string Icon { get; set; }
-
-            [JsonProperty("link")]
-            public string Link { get; set; }
-
-            [JsonProperty("asset_count")]
-            public int AssetCount { get; set; }
-
-            [JsonProperty("inventory_logo")]
-            public string InventoryLogo { get; set; }
-
-            [JsonProperty("trade_permissions")]
-            public string TradePermissions { get; set; }
-
-            [JsonProperty("rgContexts")]
-            public Dictionary<ulong, RgContext> RgContexts { get; set; }
-
-            public class RgContext
-            {
-                [JsonProperty("asset_count")]
-                public int AssetCount { get; set; }
-
-                [JsonProperty("id")]
-                public string Id { get; set; }
-
-                [JsonProperty("name")]
-                public string Name { get; set; }
-            }
-        }
+        public bool IsPrivate;
 
         public class Inventory
         {
-            public Inventory(dynamic moreStart)
+            public Item GetItem(ItemDescription itemDescription)
             {
-                this.moreStart = moreStart;
+                return Items.SingleOrDefault(item =>
+                    itemDescription.AppId.ToString() == item.Appid &&
+                    itemDescription.ClassId.ToString() == item.ClassId &&
+                    itemDescription.InstanceId.ToString() == item.InstanceId
+                );
             }
 
-            public Item GetItem(int appId, ulong contextId, ulong id)
+            public ItemDescription GetItemDescription(Item item)
             {
-                var itemId = id.ToString();
-                var item = RgCurrencies.ContainsKey(itemId) ? RgCurrencies[itemId] : null;
-                if (item == null) return RgInventory.ContainsKey(itemId) ? RgInventory[itemId] : null;
-                item.IsCurrency = true;
-                return item;
+                if (item == null) return null;
+
+                return Descriptions.SingleOrDefault(itemDesc =>
+                    itemDesc.AppId.ToString() == item.Appid &&
+                    itemDesc.ClassId.ToString() == item.ClassId &&
+                    itemDesc.InstanceId.ToString() == item.InstanceId
+                );
             }
 
-            public ItemDescription GetItemDescription(int appId, ulong contextId, ulong id, bool isCurrency)
-            {
-                var itemId = id.ToString();
-                if (isCurrency)
-                {
-                    if (!RgCurrencies.ContainsKey(itemId)) return null;
-                    var item = RgCurrencies[itemId];
-                    var key = string.Format("{0}_{1}", item.ClassId, 0);
-                    return RgDescriptions.ContainsKey(key) ? RgDescriptions[key] : null;
-                }
-                if (RgInventory.ContainsKey(itemId))
-                {
-                    var item = RgInventory[itemId];
-                    var key = string.Format("{0}_{1}", item.ClassId, item.InstanceId);
-                    return RgDescriptions.ContainsKey(key) ? RgDescriptions[key] : null;
-                }
-                return null;
-            }
-
-            public ItemDescription GetItemDescriptionByClassId(int appId, ulong contextId, ulong classId, bool isCurrency)
-            {
-                if (isCurrency)
-                {
-                    var key = string.Format("{0}_{1}", classId, 0);
-                    return RgDescriptions.ContainsKey(key) ? RgDescriptions[key] : null;
-                }
-                foreach (var rgItem in RgInventory.Where(rgItem => rgItem.Value.ClassId == classId))
-                {
-                    var item = RgInventory[rgItem.Key];
-                    var key = string.Format("{0}_{1}", classId, item.InstanceId);
-                    return RgDescriptions.ContainsKey(key) ? RgDescriptions[key] : null;
-                }
-                return null;
-            }
 
             public int AppId { get; set; }
             public ulong ContextId { get; set; }
             public SteamID SteamId { get; set; }
 
-            private List<Item> _items { get; set; }
-            public List<Item> Items
-            {
-                get
-                {
-                    if (_items == null)
-                    {
-                        _items = new List<Item>();
-                        _items.AddRange(RgInventory.Values);
-                        _items.AddRange(RgCurrencies.Values);
-                    }                    
-                    return _items;
-                }
-                set { _items = value; }
-            }
+            [JsonProperty("descriptions")]
+            public List<ItemDescription> Descriptions { get; set; }
 
-            private List<ItemDescription> _descriptions { get; set; } 
-            public List<ItemDescription> Descriptions
-            {
-                get
-                {
-                    if (_descriptions == null)
-                    {
-                        _descriptions = RgDescriptions.Values.ToList();
-                    }
-                    return _descriptions;
-                }
-                set { _descriptions = value;  }
-            }
+            [JsonProperty("total_inventory_count")]
+            public int Count { get; set; }
 
             [JsonProperty("success")]
             public bool Success { get; set; }
 
-            [JsonProperty("rgInventory")]
-            private dynamic _rgInventory { get; set; }
-            private Dictionary<string, Item> rgInventory { get; set; }
-            private Dictionary<string, Item> RgInventory
-            {
-                // for some games rgInventory will be an empty array instead of a dictionary (e.g. [])
-                // this try-catch handles that
-                get
-                {
-                    try
-                    {
-                        if (rgInventory == null)
-                            rgInventory = JsonConvert.DeserializeObject<Dictionary<string, Item>>(Convert.ToString(_rgInventory));
-                        return rgInventory;
-                    }
-                    catch
-                    {
-                        return new Dictionary<string, Item>();
-                    }
-                }
-            }
+            [JsonProperty("assets")]
+            public List<Item> Items { get; set; }
 
-            [JsonProperty("rgCurrency")]
-            private dynamic _rgCurrency { get; set; }
-            private Dictionary<string, Item> rgCurrencies { get; set; }
-            private Dictionary<string, Item> RgCurrencies
-            {
-                // for some games rgCurrency will be an empty array instead of a dictionary (e.g. [])
-                // this try-catch handles that
-                get
-                {
-                    try
-                    {
-                        if (rgCurrencies == null)
-                            rgCurrencies = JsonConvert.DeserializeObject<Dictionary<string, Item>>(Convert.ToString(_rgCurrency));
-                        return rgCurrencies;
-                    }
-                    catch
-                    {
-                        return new Dictionary<string, Item>();
-                    }
-                }
-            }
-
-            [JsonProperty("rgDescriptions")]
-            private dynamic _rgDescriptions { get; set; }
-            private Dictionary<string, ItemDescription> rgDescriptions { get; set; }
-            private Dictionary<string, ItemDescription> RgDescriptions
-            {
-                get
-                {
-                    try
-                    {
-                        if (rgDescriptions == null)
-                            rgDescriptions = JsonConvert.DeserializeObject<Dictionary<string, ItemDescription>>(Convert.ToString(_rgDescriptions));
-                        return rgDescriptions;
-                    }
-                    catch
-                    {
-                        return new Dictionary<string, ItemDescription>();
-                    }
-                }
-            }
-
-            [JsonProperty("more")]
-            public bool More { get; set; }
-
-            //If the JSON returns false it will be 0 (as it should be)
-            [JsonProperty("more_start")]
-            private dynamic moreStart { get; set;  }
-            public int MoreStart
-            {
-                get
-                {
-                    return More ? (int) moreStart : 0;                    
-                }
-            }
 
             public class Item : IEquatable<Item>
             {
-                [JsonProperty("id")]
-                public ulong Id { get; set; }
+                [JsonProperty("appid")]
+                public string Appid { get; set; }
+
+                [JsonProperty("contextid")]
+                public string Contextid { get; set; }
+
+                [JsonProperty("assetid")]
+                private string _assetid { get; set; }
+
+                public ulong AssetId
+                {
+                    get { return Convert.ToUInt64(_assetid); }
+                    set { _assetid = value.ToString(); }
+                }
 
                 [JsonProperty("classid")]
-                public ulong ClassId { get; set; }
+                public string ClassId { get; set; }
 
                 [JsonProperty("instanceid")]
-                public ulong InstanceId { get; set; }
+                public string InstanceId { get; set; }
 
                 [JsonProperty("amount")]
-                public int Amount { get; set; }
+                public string Amount { get; set; }
 
-                [JsonProperty("is_currency")]
-                public bool IsCurrency { get; set; }
-
-                [JsonProperty("pos")]
-                public int Position { get; set; }
-
-                /// <summary>
-                /// Only available in Inventory History
-                /// </summary>
-                [JsonProperty("owner")]
-                public ulong OwnerId { get; set; }
 
                 public override bool Equals(object obj)
                 {
@@ -472,24 +303,17 @@ namespace SteamAPI
                     if (other == null)
                         return false;
 
-                    return Id == other.Id &&
+                    return Appid == other.Appid &&
+                           Contextid == other.Contextid &&
+                           AssetId == other.AssetId &&
                            ClassId == other.ClassId &&
                            InstanceId == other.InstanceId &&
-                           Amount == other.Amount &&
-                           IsCurrency == other.IsCurrency &&
-                           Position == other.Position &&
-                           OwnerId == other.OwnerId;
+                           Amount == other.Amount;
                 }
             }
 
             public class ItemDescription
             {
-                /// <summary>
-                /// Only available in Inventory History
-                /// </summary>
-                [JsonProperty("owner")]
-                public ulong OwnerId { get; set; }
-
                 [JsonProperty("appid")]
                 public int AppId { get; set; }
 
@@ -498,6 +322,14 @@ namespace SteamAPI
 
                 [JsonProperty("instanceid")]
                 public ulong InstanceId { get; set; }
+
+                [JsonProperty("currency")] private short _currency;
+
+                public bool IsCurrency
+                {
+                    get { return _currency == 1; }
+                    set { _currency = Convert.ToInt16(value); }
+                }
 
                 [JsonProperty("icon_url")]
                 public string IconUrl { get; set; }
@@ -535,24 +367,36 @@ namespace SteamAPI
 
                 public bool IsCraftable
                 {
-                    get
-                    {
-                        return Descriptions.Any(description => description.Value == "( Not Usable in Crafting )");
-                    }
+                    get { return Descriptions.Any(description => description.Value == "( Not Usable in Crafting )"); }
                     set { IsCraftable = value; }
                 }
 
                 [JsonProperty("tradable")]
                 private short isTradable { get; set; }
-                public bool IsTradable { get { return isTradable == 1; } set { isTradable = Convert.ToInt16(value); } }
+
+                public bool IsTradable
+                {
+                    get { return isTradable == 1; }
+                    set { isTradable = Convert.ToInt16(value); }
+                }
 
                 [JsonProperty("marketable")]
                 private short isMarketable { get; set; }
-                public bool IsMarketable { get { return isMarketable == 1; } set { isMarketable = Convert.ToInt16(value); } }
+
+                public bool IsMarketable
+                {
+                    get { return isMarketable == 1; }
+                    set { isMarketable = Convert.ToInt16(value); }
+                }
 
                 [JsonProperty("commodity")]
                 private short isCommodity { get; set; }
-                public bool IsCommodity { get { return isCommodity == 1; } set { isCommodity = Convert.ToInt16(value); } }
+
+                public bool IsCommodity
+                {
+                    get { return isCommodity == 1; }
+                    set { isCommodity = Convert.ToInt16(value); }
+                }
 
                 [JsonProperty("market_fee_app")]
                 public int MarketFeeApp { get; set; }
@@ -568,9 +412,6 @@ namespace SteamAPI
 
                 [JsonProperty("tags")]
                 public Tag[] Tags { get; set; }
-
-                [JsonProperty("app_data")]
-                public App_Data AppData { get; set; }
 
                 public class Description
                 {
@@ -622,7 +463,6 @@ namespace SteamAPI
 
     public class GenericInventoryException : Exception
     {
-        
     }
 
     public class InventoriesToFetch : Dictionary<SteamID, List<InventoriesToFetch.InventoryInfo>>

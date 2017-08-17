@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using SteamAPI;
 using SteamAPI.TradeOffers;
 using SteamAPI.TradeOffers.Objects;
 
@@ -138,15 +139,18 @@ namespace SteamBot
                 {
                     // EXAMPLE: working with inventories
                     var tradeOffer = TradeOffers.CreateTrade(OtherSID);
-                    // second parameter is optional and tells the bot to only fetch the CSGO inventory (730)
-                    var inventories = FetchInventories(Bot.SteamClient.SteamID, new List<int> { 730 });
+                    var appIdsAndContextId = new Dictionary<int,int>
+                    {
+                        {(int) GenericInventory.AppId.CSGO, (int) GenericInventory.ContextId.CSGO}
+                    };
+                    var inventories = FetchInventories(Bot.SteamClient.SteamID, appIdsAndContextId, true);
                     var csgoInventory = inventories.GetInventory(730, 2);
                     foreach (var item in csgoInventory.Items)
                     {
                         // if you need info about the item, such as name, etc, use GetItemDescription
-                        var description = csgoInventory.GetItemDescription(730, 2, item.Id, false);
+                        var description = csgoInventory.GetItemDescription(item);
                         Log.Info("This item is: {0}.", description.Name);
-                        tradeOffer.AddMyItem(730, 2, item.Id);
+                        tradeOffer.AddMyItem(730, 2, item.AssetId);
                         break;
                     }
                     try
