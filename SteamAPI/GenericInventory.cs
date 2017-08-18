@@ -18,7 +18,7 @@ namespace SteamAPI
     public class GenericInventory
     {
         private readonly BotInventories _inventories = new BotInventories();
-        private readonly InventoryTasks _inventoryTasks = new InventoryTasks();        
+        private readonly InventoryTasks _inventoryTasks = new InventoryTasks();
         private readonly Task _constructTask;
         private const int WebRequestMaxRetries = 3;
         private const int WebRequestTimeBetweenRetriesMs = 1000;
@@ -37,7 +37,14 @@ namespace SteamAPI
             }
         }
 
-        public GenericInventory(SteamID steamId, SteamWeb steamWeb, Dictionary<int, int> appIdsAndContextId, bool onlyTradeableItems)
+        public GenericInventory(
+            SteamID steamId,
+            SteamWeb steamWeb,
+            Dictionary<int, int> appIdsAndContextId,
+            int count = 500,
+            bool onlyTradeableItems = true,
+            string lastAssetId = ""
+        )
         {
             if (appIdsAndContextId == null)
             {
@@ -46,7 +53,7 @@ namespace SteamAPI
 
             if (appIdsAndContextId.Count == 0)
             {
-                throw new ArgumentException("must have some value added","appIdsAndContextId");
+                throw new ArgumentException("must have some value added", "appIdsAndContextId");
             }
             _steamWeb = steamWeb;
 
@@ -61,10 +68,7 @@ namespace SteamAPI
                         _inventoryTasks[appId] = new InventoryTasks.ContextTask();
                         _inventoryTasks[appId][contextId] = Task.Factory.StartNew(() =>
                         {
-                            var inventoryUrl = string.Format("http://steamcommunity.com/inventory/{0}/{1}/{2}", steamId.ConvertToUInt64(), appId, contextId);
-                            if (onlyTradeableItems)
-                                inventoryUrl += "?trading=1";
-                            var inventory = FetchInventory(inventoryUrl, steamId, appId, contextId);
+                            var inventory = FetchInventory(steamId, appId, contextId, count, onlyTradeableItems, lastAssetId);
                             if (!_inventories.HasAppId(appId))
                                 _inventories[appId] = new BotInventories.ContextInventory();
                             if (inventory != null && !_inventories[appId].HasContextId(contextId))
@@ -83,9 +87,16 @@ namespace SteamAPI
             new Thread(WaitAllTasks).Start();
         }
 
-        public static GenericInventory FetchInventories(SteamID steamId, SteamWeb steamWeb, Dictionary<int, int> appIdsAndContextId, bool onlyTradeableItems)
+        public static GenericInventory FetchInventories(
+            SteamID steamId,
+            SteamWeb steamWeb,
+            Dictionary<int, int> appIdsAndContextId,
+            int count = 500,
+            bool onlyTradeableItems = true,
+            string lastAssetId = ""
+        )
         {
-            return new GenericInventory(steamId, steamWeb, appIdsAndContextId, onlyTradeableItems);
+            return new GenericInventory(steamId, steamWeb, appIdsAndContextId, count, onlyTradeableItems, lastAssetId);
         }
 
         public enum AppId
@@ -133,30 +144,41 @@ namespace SteamAPI
             }
         }
 
-        public void AddForeignInventory(SteamID steamId, int appId, ulong contextId,bool onlyTradeableItems)
+        public void AddForeignInventory(SteamID steamId, int appId, ulong contextId, bool onlyTradeableItems)
         {
-            var inventory = FetchForeignInventory(steamId, appId, contextId,onlyTradeableItems);
+            var inventory = FetchForeignInventory(steamId, appId, contextId, onlyTradeableItems);
             if (!_inventories.HasAppId(appId))
                 _inventories[appId] = new BotInventories.ContextInventory();
             if (inventory != null && !_inventories[appId].HasContextId(contextId))
                 _inventories[appId].Add(contextId, inventory);
         }
 
-        private Inventory FetchForeignInventory(SteamID steamId, int appId, ulong contextId, bool onlyTradeableItems)
+        private Inventory FetchForeignInventory(SteamID steamId, int appId, ulong contextId, bool onlyTradeableItems, int count = 5000)
         {
-            var inventoryUrl = string.Format("http://steamcommunity.com/inventory/{0}/{1}/{2}", steamId.ConvertToUInt64(), appId, contextId);
-            if (onlyTradeableItems)
-                inventoryUrl += "?trading=1";
-            return FetchInventory(inventoryUrl, steamId, appId, contextId);
+            return FetchInventory(steamId, appId, contextId, count, onlyTradeableItems);
         }
 
-        private Inventory FetchInventory(string inventoryUrl, SteamID steamId, int appId, ulong contextId)
+        private Inventory FetchInventory(SteamID steamId, int appId, ulong contextId, int count = 5000, bool onlyTradeableItems = true, string lastAssetId = "")
         {
+            var inventoryUrl = string.Format("http://steamcommunity.com/inventory/{0}/{1}/{2}?count={3}", steamId.ConvertToUInt64(), appId, contextId, count);
+
+            if (onlyTradeableItems)
+                inventoryUrl += "?trading=1";
+
+            if (!string.IsNullOrEmpty(lastAssetId))
+                inventoryUrl += "&start_assetid=" + lastAssetId;
+
+
             var response = RetryWebRequest(inventoryUrl);
             try
             {
                 var inventory = JsonConvert.DeserializeObject<Inventory>(response);
-
+                if (inventory.More)
+                {
+                    var addInv = FetchInventory(steamId, appId, contextId, count, onlyTradeableItems, inventory.LastAssetId);
+                    inventory.Items = inventory.Items.Concat(addInv.Items).ToList();
+                    inventory.Descriptions = inventory.Descriptions.Concat(addInv.Descriptions).ToList();
+                }
                 inventory.AppId = appId;
                 inventory.ContextId = contextId;
                 inventory.SteamId = steamId;
@@ -236,7 +258,7 @@ namespace SteamAPI
             {
                 if (item == null) return null;
 
-                return Descriptions.SingleOrDefault(itemDesc =>
+                return Descriptions.FirstOrDefault(itemDesc =>
                     itemDesc.AppId.ToString() == item.Appid &&
                     itemDesc.ClassId.ToString() == item.ClassId &&
                     itemDesc.InstanceId.ToString() == item.InstanceId
@@ -259,6 +281,18 @@ namespace SteamAPI
 
             [JsonProperty("assets")]
             public List<Item> Items { get; set; }
+
+            [JsonProperty("last_assetid")]
+            public string LastAssetId { get; set; }
+
+            [JsonProperty("more_items")]
+            private int _more { get; set; }
+
+            public bool More
+            {
+                get { return Convert.ToBoolean(_more); }
+                set { _more = Convert.ToInt32(value); }
+            }
 
 
             public class Item : IEquatable<Item>
@@ -348,12 +382,10 @@ namespace SteamAPI
 
                 [JsonProperty("market_name")]
                 private string name { get; set; }
+
                 public string Name
                 {
-                    get
-                    {
-                        return string.IsNullOrEmpty(name) ? DisplayName : name;
-                    }
+                    get { return string.IsNullOrEmpty(name) ? DisplayName : name; }
                 }
 
                 [JsonProperty("name_color")]

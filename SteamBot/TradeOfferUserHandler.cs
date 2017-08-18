@@ -143,7 +143,7 @@ namespace SteamBot
                     {
                         {(int) GenericInventory.AppId.CSGO, (int) GenericInventory.ContextId.CSGO}
                     };
-                    var inventories = FetchInventories(Bot.SteamClient.SteamID, appIdsAndContextId, true);
+                    var inventories = FetchInventories(Bot.SteamClient.SteamID, appIdsAndContextId);
                     var csgoInventory = inventories.GetInventory(730, 2);
                     foreach (var item in csgoInventory.Items)
                     {

@@ -45,5 +45,6 @@ namespace SteamAPI
             public long ContextId = 2;
         }        
     }
+    
 }
 
